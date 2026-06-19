@@ -230,10 +230,86 @@ async function getEpisodeUrl(seriesItem, seasonNum, episodeNum, episodesData, ma
 }
 
 async function fetchAndParseLivePlaylist(includeAdult = false) {
-  const playlistUrl = includeAdult
-    ? 'http://drewlive24.duckdns.org:8081/DrewLive/MergedPlaylist.m3u8'
-    : 'http://drewlive24.duckdns.org:8081/DrewLive/MergedCleanPlaylist.m3u8';
+  const playlistUrl =
+    'https://raw.githubusercontent.com/Behnood1368/Iptv/refs/heads/main/Kodi.m3u';
 
+  try {
+    const res = await httpGet(playlistUrl);
+    let playlist = await res.text();
+
+    const lines = playlist.split('\n');
+    const parsedData = [];
+    const categories = [];
+    const categoryMap = {};
+    let catCounter = 200;
+    const usedIds = new Set();
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+
+      if (line.startsWith('#EXTINF:')) {
+        const attrs = {};
+        const attrMatches = line.matchAll(/([\w\-]+)\s*=\s*"([^"]*)"/g);
+
+        for (const match of attrMatches) {
+          attrs[match[1]] = match[2];
+        }
+
+        const nameMatch = line.match(/,(.*)$/);
+        const channelName = nameMatch ? nameMatch[1].trim() : '';
+
+        const epgId = attrs['tvg-id'] || channelName;
+        const logo = attrs['tvg-logo'] || '';
+        const group = (attrs['group-title'] || 'Uncategorized').trim();
+
+        if (channelName) {
+
+          if (!categoryMap[group]) {
+            categoryMap[group] = catCounter++;
+            categories.push({
+              category_id: String(categoryMap[group]),
+              category_name: group,
+              parent_id: 0
+            });
+          }
+
+          let streamId = channelIdFromName(channelName);
+          while (usedIds.has(streamId)) {
+            streamId++;
+          }
+          usedIds.add(streamId);
+
+          let videoUrl = '';
+          if (i + 1 < lines.length && !lines[i + 1].startsWith('#')) {
+            videoUrl = lines[i + 1].trim();
+          }
+
+          parsedData.push({
+            num: streamId,
+            name: channelName,
+            stream_type: "live",
+            stream_id: streamId,
+            stream_icon: logo,
+            epg_channel_id: epgId,
+            added: Math.floor(Date.now() / 1000),
+            category_id: String(categoryMap[group]),
+            custom_sid: "",
+            tv_archive: 0,
+            direct_source: videoUrl,
+            tv_archive_duration: 0,
+            video_url: videoUrl
+          });
+        }
+      }
+    }
+
+    return { streams: parsedData, categories };
+
+  } catch (e) {
+    log("[fetchAndParseLivePlaylist] error:", e.message);
+    return { streams: [], categories: [] };
+  }
+}
   try {
     const res = await httpGet(playlistUrl);
     let playlist = await res.text();
