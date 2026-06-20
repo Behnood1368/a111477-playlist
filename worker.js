@@ -9,20 +9,10 @@ const EPISODES_JSON = `${GITHUB_BASE}/episodes.json`;
 const MOVIE_CATS_JSON = `${GITHUB_BASE}/movie_categories.json`;
 const SERIES_CATS_JSON = `${GITHUB_BASE}/series_categories.json`;
 
-const FILE_BASE = "https://a.111477.xyz";
-
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
 
 /* ------------------ helpers ------------------ */
 const log = (...a) => console.log(new Date().toISOString(), ...a);
-
-function normalizeFileUrl(u) {
-  if (!u) return null;
-  const s = String(u).trim();
-  if (/^https?:\/\//i.test(s)) return s;
-  const base = FILE_BASE.endsWith("/") ? FILE_BASE : `${FILE_BASE}/`;
-  return new URL(s.replace(/^\/+/, ""), base).toString();
-}
 
 function escapeAttr(s) {
   return String(s).replace(/"/g, '\\"');
@@ -229,87 +219,10 @@ async function getEpisodeUrl(seriesItem, seasonNum, episodeNum, episodesData, ma
   }
 }
 
-async function fetchAndParseLivePlaylist(includeAdult = false) {
-  const playlistUrl =
-    'https://raw.githubusercontent.com/Behnood1368/Iptv/refs/heads/main/Kodi.m3u';
+async function fetchAndParseLivePlaylist() {
+  // پلی‌لیست جدید شما
+  const playlistUrl = 'https://raw.githubusercontent.com/Behnood1368/Iptv/main/Kodi.m3u';
 
-  try {
-    const res = await httpGet(playlistUrl);
-    let playlist = await res.text();
-
-    const lines = playlist.split('\n');
-    const parsedData = [];
-    const categories = [];
-    const categoryMap = {};
-    let catCounter = 200;
-    const usedIds = new Set();
-
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i].trim();
-
-      if (line.startsWith('#EXTINF:')) {
-        const attrs = {};
-        const attrMatches = line.matchAll(/([\w\-]+)\s*=\s*"([^"]*)"/g);
-
-        for (const match of attrMatches) {
-          attrs[match[1]] = match[2];
-        }
-
-        const nameMatch = line.match(/,(.*)$/);
-        const channelName = nameMatch ? nameMatch[1].trim() : '';
-
-        const epgId = attrs['tvg-id'] || channelName;
-        const logo = attrs['tvg-logo'] || '';
-        const group = (attrs['group-title'] || 'Uncategorized').trim();
-
-        if (channelName) {
-
-          if (!categoryMap[group]) {
-            categoryMap[group] = catCounter++;
-            categories.push({
-              category_id: String(categoryMap[group]),
-              category_name: group,
-              parent_id: 0
-            });
-          }
-
-          let streamId = channelIdFromName(channelName);
-          while (usedIds.has(streamId)) {
-            streamId++;
-          }
-          usedIds.add(streamId);
-
-          let videoUrl = '';
-          if (i + 1 < lines.length && !lines[i + 1].startsWith('#')) {
-            videoUrl = lines[i + 1].trim();
-          }
-
-          parsedData.push({
-            num: streamId,
-            name: channelName,
-            stream_type: "live",
-            stream_id: streamId,
-            stream_icon: logo,
-            epg_channel_id: epgId,
-            added: Math.floor(Date.now() / 1000),
-            category_id: String(categoryMap[group]),
-            custom_sid: "",
-            tv_archive: 0,
-            direct_source: videoUrl,
-            tv_archive_duration: 0,
-            video_url: videoUrl
-          });
-        }
-      }
-    }
-
-    return { streams: parsedData, categories };
-
-  } catch (e) {
-    log("[fetchAndParseLivePlaylist] error:", e.message);
-    return { streams: [], categories: [] };
-  }
-}
   try {
     const res = await httpGet(playlistUrl);
     let playlist = await res.text();
@@ -336,11 +249,11 @@ async function fetchAndParseLivePlaylist(includeAdult = false) {
         const nameMatch = line.match(/,(.*)$/);
         const channelName = nameMatch ? nameMatch[1].trim() : '';
         
-        const epgId = attrs['tvg-id'] || '';
+        const epgId = attrs['tvg-id'] || channelName || 'unknown';
         const logo = attrs['tvg-logo'] || '';
         const group = (attrs['group-title'] || 'Uncategorized').trim();
         
-        if (channelName && epgId && group) {
+        if (channelName) {
           // Handle category
           if (!categoryMap[group]) {
             categoryMap[group] = catCounter++;
@@ -514,8 +427,7 @@ async function handlePlayerAPI(request) {
   }
 
 	if (action === "get_live_categories") {
-		const includeAdult = false;
-		const { categories } = await fetchAndParseLivePlaylist(includeAdult);
+		const { categories } = await fetchAndParseLivePlaylist();
 		
 		return new Response(JSON.stringify([
 			{ category_id: "0", category_name: "All", parent_id: 0 },
@@ -525,9 +437,8 @@ async function handlePlayerAPI(request) {
 
 	if (action === "get_live_streams") {
 		const requestedCat = Number(url.searchParams.get("category_id") ?? 0);
-		const includeAdult = false;
 		
-		const { streams } = await fetchAndParseLivePlaylist(includeAdult);
+		const { streams } = await fetchAndParseLivePlaylist();
 		
 		let filtered = streams;
 		if (requestedCat !== 0) {
@@ -615,8 +526,7 @@ async function handlePlayerAPI(request) {
       pendingMovieResolves.set(resolveKey, promise);
       fileUrl = await promise;
     }
-    
-    fileUrl = normalizeFileUrl(fileUrl);
+
     const ext = fileUrl?.match(/\.([a-z0-9]+)$/i)?.[1]?.toLowerCase() || "mp4";
 
     return new Response(JSON.stringify({
@@ -817,11 +727,8 @@ async function handleMovie(pathname, u) {
 
   if (!fileUrl) return new Response("no video file found", { status: 404 });
 
-  const resolved = normalizeFileUrl(fileUrl);
-  if (!resolved) return new Response("no video file found", { status: 404 });
-  
-  log("[REDIRECT] movie →", resolved);
-  return Response.redirect(resolved, 302);
+  log("[REDIRECT] movie →", fileUrl);
+  return Response.redirect(fileUrl, 302);
 }
 
 async function handleSeries(pathname, u) {
@@ -937,7 +844,7 @@ export default {
 			} else if (pathname === "/player_api.php") {
 				response = await handlePlayerAPI(request);
 			} else if (pathname === "/xmltv.php") {
-				return Response.redirect("http://drewlive24.duckdns.org:8081/DrewLive/DrewLive.xml.gz", 302);
+				return Response.redirect("http://drewlive24.duckdns.org:8081/DrewLive/MergedCleanPlaylist.m3u8", 302);
 			} else if (pathname.startsWith("/movie/")) {
 				const u = pathname.split('/')[2];
 				response = await handleMovie(pathname, u);
@@ -968,5 +875,3 @@ export default {
     }
   },
 };
-
-
