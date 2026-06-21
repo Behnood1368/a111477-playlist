@@ -52,10 +52,9 @@ async function httpGet(url) {
   return res;
 }
 
-// متد جدید برای استریم مستقیم مدیا بدون ریدایرکت ۳۰۲
+// متد استریم مستقیم مدیا بدون ریدایرکت ۳۰۲ (مخصوص بخش Live)
 async function proxyStream(targetUrl, requestHeaders) {
   const cleanHeaders = new Headers();
-  // کپی کردن هدرهای ضروری برای پشتیبانی از قابلیت Range (جلو عقب کردن ویدیو)
   if (requestHeaders.has("Range")) {
     cleanHeaders.set("Range", requestHeaders.get("Range"));
   }
@@ -334,7 +333,6 @@ async function handlePlayerAPI(request) {
     const movie = movies.find(m => String(m.stream_id) === String(vodId));
     if (!movie) return new Response(JSON.stringify({ error: "not found" }), { status: 404 });
 
-    const base = `${url.protocol}//${url.host}`;
     return new Response(JSON.stringify({
       info: { movie_image: movie.stream_icon, plot: movie.plot || "", rating: movie.rating || 0 },
       movie_data: {
@@ -342,7 +340,8 @@ async function handlePlayerAPI(request) {
         name: movie.name,
         category_id: movie.category_id,
         container_extension: "mp4",
-        direct_source: `${base}/movie/${baseUserInfo.username}/${baseUserInfo.password}/${movie.stream_id}.mp4`
+        custom_sid: "",
+        direct_source: "" // خالی نگه داشتن برای اجبار Nova به استفاده از مسیردهی مستقیم
       }
     }), { headers: { "Content-Type": "application/json" } });
   }
@@ -400,7 +399,7 @@ async function handlePlayerAPI(request) {
           title: `Episode ${episodeNum}`,
           container_extension: "mp4",
           season: seasonNum,
-          custom_sid: containerExt // از این مارکر برای مسیردهی مجدد سریال استفاده می‌کنیم
+          custom_sid: containerExt
         });
       }
     }
@@ -415,7 +414,7 @@ async function handlePlayerAPI(request) {
   return new Response(JSON.stringify({ error: "bad action" }), { status: 400 });
 }
 
-// تغییر ساختار هندل ویدیوها به بازگرداندن سورس مستقیم (Proxy)
+// ریدایرکت ۳۰۲ استاندارد و بهینه برای حل مشکل VODها در Nova IPTV
 async function handleMovie(pathname, u, request) {
   const match = pathname.match(/\/movie\/([^/]+)\/([^/]+)\/(\d+)/);
   if (!match) return new Response("Bad URL", { status: 400 });
@@ -429,9 +428,18 @@ async function handleMovie(pathname, u, request) {
   const fileUrl = await findSmallestFile(movie.folder_url, maxSizeGB);
   if (!fileUrl) return new Response("File not found", { status: 404 });
 
-  return proxyStream(fileUrl, request.headers);
+  log("[REDIRECT] movie →", fileUrl);
+  
+  return new Response(null, {
+    status: 302,
+    headers: {
+      "Location": fileUrl,
+      "Access-Control-Allow-Origin": "*"
+    }
+  });
 }
 
+// هندلر پراکسی استریم برای شبکه‌های زنده (مورد تایید و بدون قطع و وصلی)
 async function handleLiveStream(pathname, request) {
   const match = pathname.match(/\/live\/([^/]+)\/([^/]+)\/(\d+)/);
   if (!match) return new Response("Bad URL", { status: 400 });
@@ -444,11 +452,11 @@ async function handleLiveStream(pathname, request) {
   return proxyStream(stream.video_url, request.headers);
 }
 
+// ریدایرکت ۳۰۲ استاندارد برای بخش سریال‌ها
 async function handleSeries(pathname, u, request) {
   const match = pathname.match(/\/series\/([^/]+)\/([^/]+)\/(\d+)/);
   if (!match) return new Response("Bad URL", { status: 400 });
 
-  // در ساختار اکستریم پلیر شناسه اپیزود عددی ارسال می‌شود
   const epIdNum = parseInt(match[3], 10);
   const series_id = Math.floor(epIdNum / 10000);
   const remainder = epIdNum % 10000;
@@ -463,7 +471,15 @@ async function handleSeries(pathname, u, request) {
   const fileUrl = await getEpisodeUrl(series, seasonNum, episodeNum, episodesData, parseFilesize(u));
   if (!fileUrl) return new Response("Episode file not found", { status: 404 });
 
-  return proxyStream(fileUrl, request.headers);
+  log("[REDIRECT] series →", fileUrl);
+
+  return new Response(null, {
+    status: 302,
+    headers: {
+      "Location": fileUrl,
+      "Access-Control-Allow-Origin": "*"
+    }
+  });
 }
 
 /* ------------------ Main Worker Handler ------------------ */
