@@ -1,7 +1,4 @@
-// Xtream Codes VOD & LIVE Mock – Cloudflare Worker Edition
-// با احراز هویت و بهبود سازگاری با پلیرهای IPTV
-
-/* ------------------ config ------------------ */
+// Xtream Codes VOD & LIVE – با ریدایرکت ۳۰۲ برای همه و احراز هویت
 const GITHUB_BASE = "https://xc-vod-files.pages.dev";
 const MOVIES_JSON = `${GITHUB_BASE}/movies.json`;
 const SERIES_JSON = `${GITHUB_BASE}/series.json`;
@@ -11,16 +8,10 @@ const SERIES_CATS_JSON = `${GITHUB_BASE}/series_categories.json`;
 
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
 
-// اعتبارنامه‌های مجاز
 const VALID_USERNAME = "123";
 const VALID_PASSWORD = "2580";
 
-/* ------------------ helpers ------------------ */
 const log = (...a) => console.log(new Date().toISOString(), ...a);
-
-function escapeAttr(s) {
-  return String(s).replace(/"/g, '\\"');
-}
 
 function parseFilesize(username) {
   if (!username || typeof username !== 'string') return null;
@@ -39,37 +30,14 @@ function channelIdFromName(name) {
     }
     return (crc ^ 0xFFFFFFFF) >>> 0;
   };
-  
   const hash = crc32(name);
   return hash % 1000000000;
 }
 
 async function httpGet(url) {
-  const res = await fetch(url, { 
-    headers: { "User-Agent": UA }
-  });
+  const res = await fetch(url, { headers: { "User-Agent": UA } });
   if (!res.ok) throw new Error(`Fetch ${url} -> ${res.status}`);
   return res;
-}
-
-// متد استریم مستقیم مدیا بدون ریدایرکت ۳۰۲ (مخصوص بخش Live)
-async function proxyStream(targetUrl, requestHeaders) {
-  const cleanHeaders = new Headers();
-  if (requestHeaders.has("Range")) {
-    cleanHeaders.set("Range", requestHeaders.get("Range"));
-  }
-  cleanHeaders.set("User-Agent", UA);
-
-  const response = await fetch(targetUrl, { headers: cleanHeaders });
-  
-  const newHeaders = new Headers(response.headers);
-  newHeaders.set("Access-Control-Allow-Origin", "*");
-  
-  return new Response(response.body, {
-    status: response.status,
-    statusText: response.statusText,
-    headers: newHeaders
-  });
 }
 
 async function fetchJSON(url) {
@@ -87,18 +55,12 @@ function parseFileTable(html) {
     const files = [];
     const linkRegex = /<a\s+[^>]*href\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))[^>]*>([^<]*)<\/a>/gi;
     let match;
-    
     while ((match = linkRegex.exec(html)) !== null) {
       const href = match[1] || match[2] || match[3];
       const text = match[4];
-      
-      if (href === "../" || text.includes("Parent Directory") || href.endsWith("/")) {
-        continue;
-      }
-      
+      if (href === "../" || text.includes("Parent Directory") || href.endsWith("/")) continue;
       const remainingHtml = html.slice(match.index);
       const sizeMatch = remainingHtml.match(/data-sort\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i);
-      
       if (sizeMatch) {
         const sizeStr = sizeMatch[1] || sizeMatch[2] || sizeMatch[3];
         const size = parseInt(sizeStr, 10);
@@ -116,11 +78,9 @@ function selectFile(files, targetSizeGB = null) {
   if (files.length === 0) return null;
   files.sort((a, b) => a.size - b.size);
   if (!targetSizeGB) return files[0].url;
-  
   const targetSizeBytes = targetSizeGB * 1024 * 1024 * 1024;
   const belowOrEqual = files.filter(f => f.size <= targetSizeBytes);
   const above = files.filter(f => f.size > targetSizeBytes);
-  
   if (belowOrEqual.length > 0) return belowOrEqual[belowOrEqual.length - 1].url;
   if (above.length > 0) return above[0].url;
   return files[0].url;
@@ -144,24 +104,18 @@ async function getEpisodeUrl(seriesItem, seasonNum, episodeNum, episodesData, ma
       ep => ep.tmdb_id === seriesItem.tmdb_id && ep.season === `Season ${String(seasonNum).padStart(2, '0')}`
     );
     if (!episodeEntry) return null;
-    
     const episodeCode = `S${String(seasonNum).padStart(2, '0')}E${String(episodeNum).padStart(2, '0')}`;
     if (!episodeEntry.episodes.includes(episodeCode)) return null;
-    
     const seasonUrl = `${seriesItem.folder_url}Season ${seasonNum}/`;
     const res = await httpGet(seasonUrl);
     const html = await res.text();
-    
     const files = [];
     const linkRegex = /<a\s+[^>]*href\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))[^>]*>([^<]*)<\/a>/gi;
     let match;
-    
     while ((match = linkRegex.exec(html)) !== null) {
       const href = match[1] || match[2] || match[3];
       const fileName = match[4];
-      
       if (href === "../" || fileName.includes("Parent Directory") || href.endsWith("/")) continue;
-      
       if (fileName.includes(episodeCode)) {
         const remainingHtml = html.slice(match.index);
         const sizeMatch = remainingHtml.match(/data-sort\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i);
@@ -198,13 +152,11 @@ async function fetchAndParseLivePlaylist() {
         for (const match of attrMatches) {
           attrs[match[1]] = match[2];
         }
-        
         const nameMatch = line.match(/,(.*)$/);
         const channelName = nameMatch ? nameMatch[1].trim() : '';
         const epgId = attrs['tvg-id'] || channelName || 'unknown';
         const logo = attrs['tvg-logo'] || '';
         const group = (attrs['group-title'] || 'Uncategorized').trim();
-        
         if (channelName) {
           if (!categoryMap[group]) {
             categoryMap[group] = catCounter++;
@@ -214,18 +166,15 @@ async function fetchAndParseLivePlaylist() {
               parent_id: 0
             });
           }
-          
           let streamId = channelIdFromName(channelName);
           while (usedIds.has(streamId)) {
             streamId = (streamId + 1) % 1000000000;
           }
           usedIds.add(streamId);
-          
           let videoUrl = '';
           if (i + 1 < lines.length && !lines[i + 1].startsWith('#')) {
             videoUrl = lines[i + 1].trim();
           }
-          
           parsedData.push({
             num: streamId,
             name: channelName,
@@ -250,8 +199,12 @@ async function fetchAndParseLivePlaylist() {
   }
 }
 
-/* ------------------ Route Handlers ------------------ */
+// ---------- احراز هویت ----------
+function checkAuth(username, password) {
+  return username === VALID_USERNAME && password === VALID_PASSWORD;
+}
 
+// ---------- Route Handlers ----------
 async function handleRoot() {
   return new Response(`Xtream API Ready`, { headers: { "Content-Type": "text/plain" } });
 }
@@ -262,8 +215,7 @@ async function handlePlayerAPI(request) {
   const username = url.searchParams.get("username") || "";
   const password = url.searchParams.get("password") || "";
 
-  // ---------- احراز هویت ----------
-  if (username !== VALID_USERNAME || password !== VALID_PASSWORD) {
+  if (!checkAuth(username, password)) {
     return new Response(JSON.stringify({ error: "Unauthorized" }), {
       status: 401,
       headers: { "Content-Type": "application/json" }
@@ -271,8 +223,8 @@ async function handlePlayerAPI(request) {
   }
 
   const baseUserInfo = {
-    username: username,
-    password: password,
+    username,
+    password,
     message: "Welcome to Xtream Server",
     auth: 1,
     status: "Active",
@@ -299,7 +251,6 @@ async function handlePlayerAPI(request) {
     }), { headers: { "Content-Type": "application/json" } });
   }
 
-  // ---- EPG (پاسخ خالی) ----
   if (action === "get_epg" || action === "get_short_epg") {
     return new Response(JSON.stringify([]), { headers: { "Content-Type": "application/json" } });
   }
@@ -313,7 +264,6 @@ async function handlePlayerAPI(request) {
     const requestedCat = Number(url.searchParams.get("category_id") ?? 0);
     const { streams } = await fetchAndParseLivePlaylist();
     let filtered = requestedCat !== 0 ? streams.filter(s => s.category_id === requestedCat) : streams;
-    // افزودن direct_source برای هر کانال
     filtered = filtered.map(s => ({
       ...s,
       direct_source: `/live/${username}/${password}/${s.stream_id}`
@@ -330,7 +280,6 @@ async function handlePlayerAPI(request) {
     const requestedCat = Number(url.searchParams.get("category_id") ?? 0);
     const movies = await fetchJSON(MOVIES_JSON);
     let filtered = requestedCat !== 0 ? movies.filter(m => m.category_id === requestedCat) : movies;
-    
     const out = filtered.map((m, i) => ({
       num: i + 1,
       name: m.name,
@@ -342,7 +291,7 @@ async function handlePlayerAPI(request) {
       category_id: m.category_id,
       container_extension: "mp4",
       custom_sid: null,
-      direct_source: `/movie/${username}/${password}/${m.stream_id}` // اضافه شد
+      direct_source: `/movie/${username}/${password}/${m.stream_id}`
     }));
     return new Response(JSON.stringify(out), { headers: { "Content-Type": "application/json" } });
   }
@@ -352,7 +301,6 @@ async function handlePlayerAPI(request) {
     const movies = await fetchJSON(MOVIES_JSON);
     const movie = movies.find(m => String(m.stream_id) === String(vodId));
     if (!movie) return new Response(JSON.stringify({ error: "not found" }), { status: 404 });
-
     return new Response(JSON.stringify({
       info: { movie_image: movie.stream_icon, plot: movie.plot || "", rating: movie.rating || 0 },
       movie_data: {
@@ -361,7 +309,7 @@ async function handlePlayerAPI(request) {
         category_id: movie.category_id,
         container_extension: "mp4",
         custom_sid: "",
-        direct_source: `/movie/${username}/${password}/${movie.stream_id}` // پر شد
+        direct_source: `/movie/${username}/${password}/${movie.stream_id}`
       }
     }), { headers: { "Content-Type": "application/json" } });
   }
@@ -375,7 +323,6 @@ async function handlePlayerAPI(request) {
     const requestedCat = Number(url.searchParams.get("category_id") ?? 0);
     const seriesList = await fetchJSON(SERIES_JSON);
     let filtered = requestedCat !== 0 ? seriesList.filter(s => s.category_id === requestedCat) : seriesList;
-
     const out = filtered.map((s, i) => ({
       num: i + 1,
       name: s.name,
@@ -394,17 +341,14 @@ async function handlePlayerAPI(request) {
     const seriesList = await fetchJSON(SERIES_JSON);
     const series = seriesList.find(s => String(s.series_id) === String(seriesId));
     if (!series) return new Response(JSON.stringify({ error: "not found" }), { status: 404 });
-
     const episodesData = await fetchJSON(EPISODES_JSON);
     const seriesEpisodes = episodesData.filter(ep => ep.tmdb_id === series.tmdb_id);
-
     const epsBySeason = {};
     for (const seasonData of seriesEpisodes) {
       const seasonMatch = seasonData.season.match(/Season (\d+)/);
       if (!seasonMatch) continue;
       const seasonNum = parseInt(seasonMatch[1], 10);
       if (!epsBySeason[seasonNum]) epsBySeason[seasonNum] = [];
-      
       for (const episodeCode of seasonData.episodes) {
         const epMatch = episodeCode.match(/S(\d{2})E(\d{2})/);
         if (!epMatch) continue;
@@ -412,7 +356,6 @@ async function handlePlayerAPI(request) {
         const numericId = series.series_id * 10000 + seasonNum * 100 + episodeNum;
         const routingData = `${series.series_id}:${seasonNum}:${episodeNum}`;
         const containerExt = btoa(routingData);
-        
         epsBySeason[seasonNum].push({
           id: numericId,
           episode_num: episodeNum,
@@ -420,11 +363,10 @@ async function handlePlayerAPI(request) {
           container_extension: "mp4",
           season: seasonNum,
           custom_sid: containerExt,
-          direct_source: `/series/${username}/${password}/${numericId}` // اضافه شد
+          direct_source: `/series/${username}/${password}/${numericId}`
         });
       }
     }
-
     return new Response(JSON.stringify({
       seasons: Object.keys(epsBySeason).map(s => ({ season_number: Number(s), name: `Season ${s}`, episode_count: epsBySeason[s].length })),
       info: { name: series.name, cover: series.stream_icon, plot: series.plot },
@@ -435,22 +377,26 @@ async function handlePlayerAPI(request) {
   return new Response(JSON.stringify({ error: "bad action" }), { status: 400 });
 }
 
-// ریدایرکت ۳۰۲ استاندارد برای VOD
-async function handleMovie(pathname, u, request) {
+// ---------- مسیرهای استریم با ریدایرکت ۳۰۲ ----------
+async function handleMovie(pathname, request) {
   const match = pathname.match(/\/movie\/([^/]+)\/([^/]+)\/(\d+)/);
   if (!match) return new Response("Bad URL", { status: 400 });
-
+  const username = match[1];
+  const password = match[2];
   const id = match[3];
+  if (!checkAuth(username, password)) {
+    return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: { "Content-Type": "application/json" } });
+  }
+
   const movies = await fetchJSON(MOVIES_JSON);
   const movie = movies.find(m => String(m.stream_id) === String(id));
   if (!movie) return new Response("Not found", { status: 404 });
 
-  const maxSizeGB = parseFilesize(u);
+  const maxSizeGB = parseFilesize(username);
   const fileUrl = await findSmallestFile(movie.folder_url, maxSizeGB);
   if (!fileUrl) return new Response("File not found", { status: 404 });
 
   log("[REDIRECT] movie →", fileUrl);
-  
   return new Response(null, {
     status: 302,
     headers: {
@@ -460,25 +406,40 @@ async function handleMovie(pathname, u, request) {
   });
 }
 
-// پراکسی استریم برای شبکه‌های زنده
 async function handleLiveStream(pathname, request) {
   const match = pathname.match(/\/live\/([^/]+)\/([^/]+)\/(\d+)/);
   if (!match) return new Response("Bad URL", { status: 400 });
-
+  const username = match[1];
+  const password = match[2];
   const streamId = Number(match[3]);
+  if (!checkAuth(username, password)) {
+    return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: { "Content-Type": "application/json" } });
+  }
+
   const { streams } = await fetchAndParseLivePlaylist();
   const stream = streams.find(s => s.stream_id === streamId);
   if (!stream || !stream.video_url) return new Response("Live stream not found", { status: 404 });
 
-  return proxyStream(stream.video_url, request.headers);
+  log("[REDIRECT] live →", stream.video_url);
+  return new Response(null, {
+    status: 302,
+    headers: {
+      "Location": stream.video_url,
+      "Access-Control-Allow-Origin": "*"
+    }
+  });
 }
 
-// ریدایرکت ۳۰۲ برای سریال‌ها
-async function handleSeries(pathname, u, request) {
+async function handleSeries(pathname, request) {
   const match = pathname.match(/\/series\/([^/]+)\/([^/]+)\/(\d+)/);
   if (!match) return new Response("Bad URL", { status: 400 });
-
+  const username = match[1];
+  const password = match[2];
   const epIdNum = parseInt(match[3], 10);
+  if (!checkAuth(username, password)) {
+    return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: { "Content-Type": "application/json" } });
+  }
+
   const series_id = Math.floor(epIdNum / 10000);
   const remainder = epIdNum % 10000;
   const seasonNum = Math.floor(remainder / 100);
@@ -489,11 +450,10 @@ async function handleSeries(pathname, u, request) {
   if (!series) return new Response("Series not found", { status: 404 });
 
   const episodesData = await fetchJSON(EPISODES_JSON);
-  const fileUrl = await getEpisodeUrl(series, seasonNum, episodeNum, episodesData, parseFilesize(u));
+  const fileUrl = await getEpisodeUrl(series, seasonNum, episodeNum, episodesData, parseFilesize(username));
   if (!fileUrl) return new Response("Episode file not found", { status: 404 });
 
   log("[REDIRECT] series →", fileUrl);
-
   return new Response(null, {
     status: 302,
     headers: {
@@ -503,7 +463,7 @@ async function handleSeries(pathname, u, request) {
   });
 }
 
-/* ------------------ Main Worker Handler ------------------ */
+/* ------------------ Main Worker ------------------ */
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -521,17 +481,14 @@ export default {
 
     try {
       let response;
-
       if (pathname === "/") {
         response = await handleRoot();
       } else if (pathname === "/player_api.php") {
         response = await handlePlayerAPI(request);
       } else if (pathname.startsWith("/movie/")) {
-        const u = pathname.split('/')[2];
-        response = await handleMovie(pathname, u, request);
+        response = await handleMovie(pathname, request);
       } else if (pathname.startsWith("/series/")) {
-        const u = pathname.split('/')[2];
-        response = await handleSeries(pathname, u, request);
+        response = await handleSeries(pathname, request);
       } else if (pathname.startsWith("/live/")) {
         response = await handleLiveStream(pathname, request);
       } else {
@@ -541,7 +498,6 @@ export default {
       const headers = new Headers(response.headers);
       Object.entries(corsHeaders).forEach(([key, value]) => headers.set(key, value));
       return new Response(response.body, { status: response.status, headers });
-
     } catch (e) {
       return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
