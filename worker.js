@@ -1,5 +1,5 @@
 // Xtream Codes VOD & LIVE Mock – Cloudflare Worker Edition
-// Movies/Series metadata from GitHub, file resolution on-demand
+// با احراز هویت و بهبود سازگاری با پلیرهای IPTV
 
 /* ------------------ config ------------------ */
 const GITHUB_BASE = "https://xc-vod-files.pages.dev";
@@ -10,6 +10,10 @@ const MOVIE_CATS_JSON = `${GITHUB_BASE}/movie_categories.json`;
 const SERIES_CATS_JSON = `${GITHUB_BASE}/series_categories.json`;
 
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
+
+// اعتبارنامه‌های مجاز
+const VALID_USERNAME = "123";
+const VALID_PASSWORD = "2580";
 
 /* ------------------ helpers ------------------ */
 const log = (...a) => console.log(new Date().toISOString(), ...a);
@@ -39,10 +43,6 @@ function channelIdFromName(name) {
   const hash = crc32(name);
   return hash % 1000000000;
 }
-
-// Throttling maps
-const pendingMovieResolves = new Map();
-const pendingEpisodeResolves = new Map();
 
 async function httpGet(url) {
   const res = await fetch(url, { 
@@ -259,10 +259,20 @@ async function handleRoot() {
 async function handlePlayerAPI(request) {
   const url = new URL(request.url);
   const action = (url.searchParams.get("action") || "").toLowerCase();
+  const username = url.searchParams.get("username") || "";
+  const password = url.searchParams.get("password") || "";
+
+  // ---------- احراز هویت ----------
+  if (username !== VALID_USERNAME || password !== VALID_PASSWORD) {
+    return new Response(JSON.stringify({ error: "Unauthorized" }), {
+      status: 401,
+      headers: { "Content-Type": "application/json" }
+    });
+  }
 
   const baseUserInfo = {
-    username: url.searchParams.get("username") || "demo",
-    password: url.searchParams.get("password") || "demo",
+    username: username,
+    password: password,
     message: "Welcome to Xtream Server",
     auth: 1,
     status: "Active",
@@ -289,6 +299,11 @@ async function handlePlayerAPI(request) {
     }), { headers: { "Content-Type": "application/json" } });
   }
 
+  // ---- EPG (پاسخ خالی) ----
+  if (action === "get_epg" || action === "get_short_epg") {
+    return new Response(JSON.stringify([]), { headers: { "Content-Type": "application/json" } });
+  }
+
   if (action === "get_live_categories") {
     const { categories } = await fetchAndParseLivePlaylist();
     return new Response(JSON.stringify([{ category_id: "0", category_name: "All", parent_id: 0 }, ...categories]), { headers: { "Content-Type": "application/json" } });
@@ -298,6 +313,11 @@ async function handlePlayerAPI(request) {
     const requestedCat = Number(url.searchParams.get("category_id") ?? 0);
     const { streams } = await fetchAndParseLivePlaylist();
     let filtered = requestedCat !== 0 ? streams.filter(s => s.category_id === requestedCat) : streams;
+    // افزودن direct_source برای هر کانال
+    filtered = filtered.map(s => ({
+      ...s,
+      direct_source: `/live/${username}/${password}/${s.stream_id}`
+    }));
     return new Response(JSON.stringify(filtered), { headers: { "Content-Type": "application/json" } });
   }
 
@@ -322,7 +342,7 @@ async function handlePlayerAPI(request) {
       category_id: m.category_id,
       container_extension: "mp4",
       custom_sid: null,
-      direct_source: ""
+      direct_source: `/movie/${username}/${password}/${m.stream_id}` // اضافه شد
     }));
     return new Response(JSON.stringify(out), { headers: { "Content-Type": "application/json" } });
   }
@@ -341,7 +361,7 @@ async function handlePlayerAPI(request) {
         category_id: movie.category_id,
         container_extension: "mp4",
         custom_sid: "",
-        direct_source: "" // خالی نگه داشتن برای اجبار Nova به استفاده از مسیردهی مستقیم
+        direct_source: `/movie/${username}/${password}/${movie.stream_id}` // پر شد
       }
     }), { headers: { "Content-Type": "application/json" } });
   }
@@ -399,7 +419,8 @@ async function handlePlayerAPI(request) {
           title: `Episode ${episodeNum}`,
           container_extension: "mp4",
           season: seasonNum,
-          custom_sid: containerExt
+          custom_sid: containerExt,
+          direct_source: `/series/${username}/${password}/${numericId}` // اضافه شد
         });
       }
     }
@@ -414,7 +435,7 @@ async function handlePlayerAPI(request) {
   return new Response(JSON.stringify({ error: "bad action" }), { status: 400 });
 }
 
-// ریدایرکت ۳۰۲ استاندارد و بهینه برای حل مشکل VODها در Nova IPTV
+// ریدایرکت ۳۰۲ استاندارد برای VOD
 async function handleMovie(pathname, u, request) {
   const match = pathname.match(/\/movie\/([^/]+)\/([^/]+)\/(\d+)/);
   if (!match) return new Response("Bad URL", { status: 400 });
@@ -439,7 +460,7 @@ async function handleMovie(pathname, u, request) {
   });
 }
 
-// هندلر پراکسی استریم برای شبکه‌های زنده (مورد تایید و بدون قطع و وصلی)
+// پراکسی استریم برای شبکه‌های زنده
 async function handleLiveStream(pathname, request) {
   const match = pathname.match(/\/live\/([^/]+)\/([^/]+)\/(\d+)/);
   if (!match) return new Response("Bad URL", { status: 400 });
@@ -452,7 +473,7 @@ async function handleLiveStream(pathname, request) {
   return proxyStream(stream.video_url, request.headers);
 }
 
-// ریدایرکت ۳۰۲ استاندارد برای بخش سریال‌ها
+// ریدایرکت ۳۰۲ برای سریال‌ها
 async function handleSeries(pathname, u, request) {
   const match = pathname.match(/\/series\/([^/]+)\/([^/]+)\/(\d+)/);
   if (!match) return new Response("Bad URL", { status: 400 });
